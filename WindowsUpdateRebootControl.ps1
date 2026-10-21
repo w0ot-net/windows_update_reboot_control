@@ -14,10 +14,10 @@ The script writes only documented Windows Update policy registry values. It does
 not disable services, alter protected scheduled tasks, restart services, or reboot.
 #>
 
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
     [ValidateSet('Audit', 'Apply', 'Restore')]
-    [string]$Action = 'Audit',
+    [string]$Action = 'Apply',
 
     [ValidateSet('StrictManual', 'ClientNotify', 'ServerNotify')]
     [string]$Mode = 'StrictManual',

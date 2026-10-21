@@ -8,6 +8,15 @@ It audits, applies, verifies, and restores documented Windows Update policy
 registry values. It does **not** disable Windows services, modify protected
 scheduled tasks, restart services, or reboot the machine.
 
+Open PowerShell as Administrator and paste this one-liner:
+
+```powershell
+Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop | Invoke-Expression
+```
+
+The default action applies the `StrictManual` profile, saves the previous policy
+state, and verifies the result. Running it again is supported.
+
 ## Important limitation
 
 Windows client editions do not offer a supported universal "never reboot for
@@ -32,7 +41,7 @@ All modes also set the logged-on-user restart guard and disable the legacy
 scheduled-time auto-restart policy. These are defense-in-depth values, not an
 absolute restart interlock.
 
-## Usage
+## Advanced usage
 
 Open an elevated Windows PowerShell or PowerShell 7 session:
 
@@ -41,14 +50,14 @@ Open an elevated Windows PowerShell or PowerShell 7 session:
 .\WindowsUpdateRebootControl.ps1 -Action Audit -Mode StrictManual |
     ConvertTo-Json -Depth 10
 
-# Apply and independently verify the strict profile
+# Apply and independently verify the strict profile (also the default action)
 .\WindowsUpdateRebootControl.ps1 -Action Apply -Mode StrictManual
 
 # Restore the state captured before the first mutation
 .\WindowsUpdateRebootControl.ps1 -Action Restore
 ```
 
-Use `-Confirm:$false` for deliberate noninteractive deployment and `-WhatIf` to
+Use `-Confirm` when an interactive confirmation is desired and `-WhatIf` to
 preview an apply or restore action.
 
 The first mutation stores a machine-bound baseline at:
