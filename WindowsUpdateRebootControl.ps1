@@ -54,6 +54,21 @@ function Assert-Administrator {
     }
 }
 
+function Test-ChangeApproved {
+    param(
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$Operation
+    )
+
+    # Invoke-Expression doesn't create the advanced-script $PSCmdlet context.
+    # Direct script and ScriptBlock invocation do, preserving -WhatIf/-Confirm.
+    $contextVariable = Get-Variable -Name PSCmdlet -Scope 1 -ErrorAction SilentlyContinue
+    if ($null -eq $contextVariable -or $null -eq $contextVariable.Value) {
+        return $true
+    }
+    return $contextVariable.Value.ShouldProcess($Target, $Operation)
+}
+
 function Get-DefaultBackupPath {
     $programData = [Environment]::GetFolderPath('CommonApplicationData')
     if ([string]::IsNullOrWhiteSpace($programData)) {
@@ -627,7 +642,7 @@ if ($Action -eq 'Apply') {
         Get-KeySnapshot -Path $script:AutomaticUpdatesPath
     )
 
-    if (-not $PSCmdlet.ShouldProcess($context.Hostname, "Apply Windows Update reboot-control mode $Mode")) {
+    if (-not (Test-ChangeApproved -Target $context.Hostname -Operation "Apply Windows Update reboot-control mode $Mode")) {
         $result = Get-AuditResult -SelectedMode $Mode -ResultAction 'ApplyWhatIf' -ResultBackupPath $BackupPath
         Write-Result -Result $result -Format $OutputFormat
         return
@@ -678,7 +693,7 @@ $currentSnapshots = @($restoreValues | ForEach-Object {
     Get-RegistryValueSnapshot -Path $_.Path -Name $_.Name
 })
 
-if (-not $PSCmdlet.ShouldProcess($context.Hostname, "Restore Windows Update policy baseline from $BackupPath")) {
+if (-not (Test-ChangeApproved -Target $context.Hostname -Operation "Restore Windows Update policy baseline from $BackupPath")) {
     $result = [pscustomobject][ordered]@{
         SchemaVersion = 1
         Action = 'RestoreWhatIf'

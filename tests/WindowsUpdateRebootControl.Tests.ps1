@@ -39,4 +39,11 @@ Describe 'WindowsUpdateRebootControl audit' {
         $result.Mode | Should -Be 'StrictManual'
         $result.PolicyValues.Count | Should -Be 4
     }
+
+    It 'supports a non-mutating apply preview' {
+        $result = & $scriptPath -Action Apply -Mode StrictManual -OutputFormat Object -WhatIf
+
+        $result.Action | Should -Be 'ApplyWhatIf'
+        $result.Mode | Should -Be 'StrictManual'
+    }
 }

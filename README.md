@@ -14,7 +14,7 @@ Open PowerShell as Administrator and paste one of the commands below.
 install, and reboot.
 
 ```powershell
-Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop | Invoke-Expression
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Apply -Mode StrictManual
 ```
 
 ## Other copy/paste commands
