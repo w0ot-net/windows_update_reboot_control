@@ -1,0 +1,3 @@
+.TestResults/
+*.tmp
+baseline.json
