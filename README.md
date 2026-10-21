@@ -1,106 +1,86 @@
 # Windows Update Reboot Control
 
-`WindowsUpdateRebootControl.ps1` is a small, reversible PowerShell policy tool
-for Windows machines whose update installation and reboot timing must remain
-under operator control.
+A single, reversible PowerShell script for keeping Windows Update installation
+and reboot timing under operator control.
 
-It audits, applies, verifies, and restores documented Windows Update policy
-registry values. It does **not** disable Windows services, modify protected
-scheduled tasks, restart services, or reboot the machine.
+Open PowerShell as Administrator and paste one of the commands below.
 
-Open PowerShell as Administrator and paste this one-liner:
+## Apply the recommended policy
+
+`StrictManual` disables automatic update installation. You decide when to check,
+install, and reboot.
 
 ```powershell
 Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop | Invoke-Expression
 ```
 
-The default action applies the `StrictManual` profile, saves the previous policy
-state, and verifies the result. Running it again is supported.
+## Other copy/paste commands
 
-## Important limitation
-
-Windows client editions do not offer a supported universal "never reboot for
-updates" switch. Microsoft's `NoAutoRebootWithLoggedOnUsers` policy applies to
-scheduled installations and signed-in users; inactive RDP sessions do not count,
-and a restart explicitly scheduled by a user overrides it.
-
-For that reason, the default `StrictManual` mode disables automatic update
-installation. The operator must check for and install updates during a planned
-maintenance window, then reboot deliberately. This controls the path to an
-update-required reboot rather than relying on brittle service or task hacks.
-
-## Modes
-
-| Mode | Behavior | Intended use |
-| --- | --- | --- |
-| `StrictManual` | Disables automatic updates and leaves download, installation, and reboot to the operator. | Unattended lab VMs and research workstations. |
-| `ClientNotify` | Windows scans and notifies, but the user initiates download and installation. | Windows 10/11 systems with an active operator. |
-| `ServerNotify` | Downloads updates, then notifies before installation and restart (`AUOptions=7`). | Windows Server 2016 or later only. |
-
-All modes also set the logged-on-user restart guard and disable the legacy
-scheduled-time auto-restart policy. These are defense-in-depth values, not an
-absolute restart interlock.
-
-## Advanced usage
-
-Open an elevated Windows PowerShell or PowerShell 7 session:
+Audit without changing anything:
 
 ```powershell
-# Read-only audit
-.\WindowsUpdateRebootControl.ps1 -Action Audit -Mode StrictManual |
-    ConvertTo-Json -Depth 10
-
-# Apply and independently verify the strict profile (also the default action)
-.\WindowsUpdateRebootControl.ps1 -Action Apply -Mode StrictManual
-
-# Restore the state captured before the first mutation
-.\WindowsUpdateRebootControl.ps1 -Action Restore
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Audit -Mode StrictManual | ConvertTo-Json -Depth 10
 ```
 
-Use `-Confirm` when an interactive confirmation is desired and `-WhatIf` to
-preview an apply or restore action.
+Apply `ClientNotify` on Windows 10 or 11:
 
-The first mutation stores a machine-bound baseline at:
-
-```text
-%ProgramData%\WindowsUpdateRebootControl\baseline.json
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Apply -Mode ClientNotify
 ```
 
-The baseline is retained after restoration so it can be reviewed and restoration
-can be repeated. Use `-BackupPath` to choose another local path.
+Apply `ServerNotify` on Windows Server 2016 or later:
 
-## Managed devices and deadline policies
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Apply -Mode ServerNotify
+```
 
-The script refuses to apply local settings to a domain-joined or MDM-managed
-device unless `-AllowManagedDevice` is supplied. Local deadline/compliance
-values also cause a refusal unless their removal is explicitly authorized with
-`-ClearConflictingDeadlinePolicies`.
+Preview the recommended policy without changing anything:
 
-MDM deadline policies are never removed locally. They must be removed at their
-management source because Windows can reapply them and they can override local
-download, installation, and restart behavior.
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Apply -Mode StrictManual -WhatIf
+```
 
-## Security responsibility
+Restore the policy state saved before the first apply:
 
-`StrictManual` trades unattended patching for reboot control. Establish a regular
-maintenance window, review pending security updates, install them, and reboot.
-Do not use this mode on machines that nobody is responsible for patching.
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Restore
+```
 
-## Supported systems
+## Arguments
 
-- Windows PowerShell 5.1 or PowerShell 7+
-- Windows 10 and Windows 11 editions that honor Windows Update administrative
-  policy
-- Windows Server 2016 or later (`ServerNotify` is server-only)
+| Argument | Values or behavior |
+| --- | --- |
+| `-Action` | `Audit`, `Apply`, or `Restore` |
+| `-Mode` | `StrictManual`, `ClientNotify`, or `ServerNotify` |
+| `-BackupPath` | Use a backup path other than `%ProgramData%\WindowsUpdateRebootControl\baseline.json` |
+| `-WhatIf` | Preview `Apply` or `Restore` |
+| `-Confirm` | Ask for confirmation before changing policy |
+| `-AllowManagedDevice` | Permit local changes on a domain-joined or MDM-managed device |
+| `-ClearConflictingDeadlinePolicies` | Remove conflicting local deadline policies after they have been reviewed |
 
-Run as administrator for `Apply` and `Restore`. `Audit` is read-only.
+Arguments can be appended to any applicable download command. For example:
 
-## Microsoft documentation
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Apply -Mode StrictManual -BackupPath 'C:\WindowsUpdateRebootControl\baseline.json' -AllowManagedDevice
+```
 
-- [Configure Automatic Updates](https://learn.microsoft.com/windows-server/administration/windows-server-update-services/deploy/4-configure-group-policy-settings-for-automatic-updates)
-- [Manage device restarts after updates](https://learn.microsoft.com/windows/deployment/update/waas-restart)
-- [Manage additional Windows Update settings](https://learn.microsoft.com/windows/deployment/update/waas-wu-settings)
+## Notes
 
-## License
+- `StrictManual` is recommended for unattended VMs. It requires you to apply
+  security updates manually.
+- `ClientNotify` scans and notifies, but the operator starts download and
+  installation.
+- `ServerNotify` downloads updates and then notifies before installation and
+  restart. It is server-only.
+- Windows client editions have no supported universal "never reboot" switch.
+  The strict mode prevents automatic update installation so Windows Update
+  cannot autonomously reach a restart-required state.
+- The script verifies its changes, saves a machine-bound baseline, and never
+  restarts Windows or services.
+- MDM deadline policies must be removed at their management source.
 
-[MIT](LICENSE)
+Microsoft references: [automatic update policy](https://learn.microsoft.com/windows-server/administration/windows-server-update-services/deploy/4-configure-group-policy-settings-for-automatic-updates),
+[restart policy](https://learn.microsoft.com/windows/deployment/update/waas-restart),
+and [additional settings](https://learn.microsoft.com/windows/deployment/update/waas-wu-settings).
+
+[MIT licensed](LICENSE).
