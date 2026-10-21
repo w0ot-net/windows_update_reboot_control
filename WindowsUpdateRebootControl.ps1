@@ -24,6 +24,9 @@ param(
 
     [string]$BackupPath,
 
+    [ValidateSet('Human', 'Json', 'Object')]
+    [string]$OutputFormat = 'Human',
+
     [switch]$AllowManagedDevice,
 
     [switch]$ClearConflictingDeadlinePolicies
@@ -62,16 +65,17 @@ function Get-DefaultBackupPath {
 function Get-MachineContext {
     $os = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $computer = Get-CimInstance -ClassName Win32_ComputerSystem
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem
     $machineGuid = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
 
     [pscustomobject][ordered]@{
         Hostname = [Environment]::MachineName
         MachineGuid = [string]$machineGuid
-        ProductName = [string]$os.ProductName
+        ProductName = [string]$operatingSystem.Caption
         DisplayVersion = [string]$os.DisplayVersion
         CurrentBuild = [string]$os.CurrentBuild
         UBR = [int]$os.UBR
-        ProductType = [int](Get-CimInstance -ClassName Win32_OperatingSystem).ProductType
+        ProductType = [int]$operatingSystem.ProductType
         DomainJoined = [bool]$computer.PartOfDomain
         Domain = [string]$computer.Domain
     }
@@ -225,7 +229,7 @@ function Get-AuditResult {
     $pending = Get-PendingRestartState
     $warnings = @()
     if ($SelectedMode -eq 'StrictManual') {
-        $warnings += 'Automatic Windows Update installation is disabled; manually check and patch during a planned reboot window.'
+        $warnings += 'StrictManual requires you to check for updates, install them, and reboot during a planned maintenance window.'
     } else {
         $warnings += 'This mode reduces automatic restart risk but is not a universal reboot interlock.'
     }
@@ -261,6 +265,187 @@ function Get-AuditResult {
         BackupPath = $ResultBackupPath
         BackupCreated = $BackupCreated
         BackupUpdated = $BackupUpdated
+    }
+}
+
+function Get-PolicyDisplayValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        $Value,
+        [bool]$Exists = $true
+    )
+
+    if (-not $Exists) {
+        return 'not set'
+    }
+
+    switch ($Name) {
+        'NoAutoUpdate' {
+            if ([int]$Value -eq 1) { return 'disabled' }
+            if ([int]$Value -eq 0) { return 'enabled' }
+        }
+        'AUOptions' {
+            switch ([int]$Value) {
+                2 { return 'notify before download and installation (2)' }
+                3 { return 'download automatically; notify before installation (3)' }
+                4 { return 'download and install on a schedule (4)' }
+                5 { return 'local administrator chooses (5)' }
+                7 { return 'server: notify before installation and restart (7)' }
+            }
+        }
+        'NoAutoRebootWithLoggedOnUsers' {
+            if ([int]$Value -eq 1) { return 'enabled' }
+            if ([int]$Value -eq 0) { return 'disabled' }
+        }
+        'AlwaysAutoRebootAtScheduledTime' {
+            if ([int]$Value -eq 1) { return 'enabled' }
+            if ([int]$Value -eq 0) { return 'disabled' }
+        }
+    }
+    return [string]$Value
+}
+
+function Get-PolicyDisplayName {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    switch ($Name) {
+        'NoAutoUpdate' { return 'Automatic update installation' }
+        'AUOptions' { return 'Update mode' }
+        'NoAutoRebootWithLoggedOnUsers' { return 'Logged-on user restart guard' }
+        'AlwaysAutoRebootAtScheduledTime' { return 'Scheduled-time auto-restart' }
+        default { return $Name }
+    }
+}
+
+function Write-HumanAuditResult {
+    param([Parameter(Mandatory = $true)]$Result)
+
+    Write-Host ''
+    Write-Host 'Windows Update Reboot Control' -ForegroundColor Cyan
+    Write-Host '-----------------------------' -ForegroundColor DarkCyan
+    Write-Host ('Host:   {0} ({1}, build {2})' -f $Result.Host.Hostname, $Result.Host.ProductName, $Result.Host.Build)
+    Write-Host ('Action: {0}' -f $Result.Action)
+    Write-Host ('Mode:   {0}' -f $Result.Mode)
+
+    if (-not $Result.Supported) {
+        Write-Host 'Status: UNSUPPORTED ON THIS WINDOWS EDITION' -ForegroundColor Red
+    } elseif ($Result.Compliant) {
+        if ($Result.Action -eq 'Applied') {
+            Write-Host 'Status: APPLIED AND VERIFIED' -ForegroundColor Green
+        } else {
+            Write-Host 'Status: POLICY MATCHES' -ForegroundColor Green
+        }
+    } elseif ($Result.Action -eq 'ApplyWhatIf') {
+        Write-Host 'Status: PREVIEW ONLY - NO CHANGES MADE' -ForegroundColor Yellow
+    } else {
+        Write-Host 'Status: CHANGES NEEDED' -ForegroundColor Yellow
+    }
+
+    Write-Host ''
+    Write-Host 'Policy' -ForegroundColor Cyan
+    foreach ($entry in $Result.PolicyValues) {
+        $displayName = Get-PolicyDisplayName -Name $entry.Name
+        $expected = Get-PolicyDisplayValue -Name $entry.Name -Value $entry.ExpectedValue
+        $actual = Get-PolicyDisplayValue -Name $entry.Name -Value $entry.ActualValue -Exists $entry.Exists
+        if ($entry.Matches) {
+            Write-Host '  [OK] ' -ForegroundColor Green -NoNewline
+            Write-Host ("{0}: {1}" -f $displayName, $actual)
+        } else {
+            Write-Host '  [CHANGE] ' -ForegroundColor Yellow -NoNewline
+            Write-Host ("{0}: expected {1}; found {2}" -f $displayName, $expected, $actual)
+        }
+    }
+
+    Write-Host ''
+    Write-Host 'Checks' -ForegroundColor Cyan
+    $managed = $Result.Management.DomainJoined -or $Result.Management.MdmUpdatePolicyPresent
+    if ($managed) {
+        Write-Host '  [WARN] ' -ForegroundColor Yellow -NoNewline
+        Write-Host 'Domain or MDM management detected.'
+    } else {
+        Write-Host '  [OK] ' -ForegroundColor Green -NoNewline
+        Write-Host 'No domain or MDM update management detected.'
+    }
+
+    $deadlineCount = @($Result.Management.LocalDeadlinePolicies).Count + @($Result.Management.MdmDeadlinePolicies).Count
+    if ($deadlineCount -gt 0) {
+        Write-Host '  [WARN] ' -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0} conflicting deadline/compliance policy value(s) detected." -f $deadlineCount)
+    } else {
+        Write-Host '  [OK] ' -ForegroundColor Green -NoNewline
+        Write-Host 'No conflicting deadline policies detected.'
+    }
+
+    $pendingNames = @()
+    if ($Result.PendingRestart.ComponentServicing) { $pendingNames += 'component servicing' }
+    if ($Result.PendingRestart.WindowsUpdate) { $pendingNames += 'Windows Update' }
+    if ($Result.PendingRestart.PendingFileRename) { $pendingNames += 'pending file rename' }
+    if ($pendingNames.Count -gt 0) {
+        Write-Host '  [WARN] ' -ForegroundColor Yellow -NoNewline
+        Write-Host ("Pending restart detected: {0}." -f ($pendingNames -join ', '))
+    } else {
+        Write-Host '  [OK] ' -ForegroundColor Green -NoNewline
+        Write-Host 'No pending restart detected.'
+    }
+
+    if ($Result.BackupCreated) {
+        Write-Host '  [OK] ' -ForegroundColor Green -NoNewline
+        Write-Host ("Baseline backup created: {0}" -f $Result.BackupPath)
+    } elseif ($Result.BackupUpdated) {
+        Write-Host '  [OK] ' -ForegroundColor Green -NoNewline
+        Write-Host ("Baseline backup updated: {0}" -f $Result.BackupPath)
+    } elseif (-not [string]::IsNullOrWhiteSpace([string]$Result.BackupPath)) {
+        Write-Host ("  Backup: {0}" -f $Result.BackupPath) -ForegroundColor DarkGray
+    }
+
+    if (@($Result.Warnings).Count -gt 0) {
+        Write-Host ''
+        Write-Host 'Notes' -ForegroundColor Cyan
+        foreach ($warning in $Result.Warnings) {
+            Write-Host ("  - {0}" -f $warning) -ForegroundColor DarkYellow
+        }
+    }
+    Write-Host ''
+}
+
+function Write-HumanRestoreResult {
+    param([Parameter(Mandatory = $true)]$Result)
+
+    Write-Host ''
+    Write-Host 'Windows Update Reboot Control' -ForegroundColor Cyan
+    Write-Host '-----------------------------' -ForegroundColor DarkCyan
+    Write-Host ("Host:   {0}" -f $Result.Hostname)
+    Write-Host ("Action: {0}" -f $Result.Action)
+    if ($Result.Action -eq 'RestoreWhatIf') {
+        Write-Host 'Status: PREVIEW ONLY - NO CHANGES MADE' -ForegroundColor Yellow
+    } else {
+        Write-Host 'Status: ORIGINAL POLICY RESTORED AND VERIFIED' -ForegroundColor Green
+        Write-Host 'Reboot: Not performed' -ForegroundColor Green
+    }
+    Write-Host ("Backup: {0}" -f $Result.BackupPath) -ForegroundColor DarkGray
+    Write-Host ''
+}
+
+function Write-Result {
+    param(
+        [Parameter(Mandatory = $true)]$Result,
+        [Parameter(Mandatory = $true)][string]$Format
+    )
+
+    switch ($Format) {
+        'Json' {
+            Write-Output ($Result | ConvertTo-Json -Depth 10)
+        }
+        'Object' {
+            Write-Output $Result
+        }
+        'Human' {
+            if ($Result.Action -like 'Restore*') {
+                Write-HumanRestoreResult -Result $Result
+            } else {
+                Write-HumanAuditResult -Result $Result
+            }
+        }
     }
 }
 
@@ -402,7 +587,8 @@ if ([string]::IsNullOrWhiteSpace($BackupPath)) {
 }
 
 if ($Action -eq 'Audit') {
-    Get-AuditResult -SelectedMode $Mode -ResultAction 'Audited' -ResultBackupPath $BackupPath
+    $result = Get-AuditResult -SelectedMode $Mode -ResultAction 'Audited' -ResultBackupPath $BackupPath
+    Write-Result -Result $result -Format $OutputFormat
     return
 }
 
@@ -442,7 +628,8 @@ if ($Action -eq 'Apply') {
     )
 
     if (-not $PSCmdlet.ShouldProcess($context.Hostname, "Apply Windows Update reboot-control mode $Mode")) {
-        Get-AuditResult -SelectedMode $Mode -ResultAction 'ApplyWhatIf' -ResultBackupPath $BackupPath
+        $result = Get-AuditResult -SelectedMode $Mode -ResultAction 'ApplyWhatIf' -ResultBackupPath $BackupPath
+        Write-Result -Result $result -Format $OutputFormat
         return
     }
 
@@ -465,7 +652,7 @@ if ($Action -eq 'Apply') {
         if (-not $result.Compliant) {
             throw 'Post-apply verification failed or a conflicting deadline policy remains.'
         }
-        $result
+        Write-Result -Result $result -Format $OutputFormat
     } catch {
         Restore-ValueSnapshots -Snapshots $allSnapshots
         Remove-NewEmptyKeys -KeySnapshots $keySnapshots
@@ -492,12 +679,13 @@ $currentSnapshots = @($restoreValues | ForEach-Object {
 })
 
 if (-not $PSCmdlet.ShouldProcess($context.Hostname, "Restore Windows Update policy baseline from $BackupPath")) {
-    [pscustomobject][ordered]@{
+    $result = [pscustomobject][ordered]@{
         SchemaVersion = 1
         Action = 'RestoreWhatIf'
         Hostname = $context.Hostname
         BackupPath = $BackupPath
     }
+    Write-Result -Result $result -Format $OutputFormat
     return
 }
 
@@ -507,7 +695,7 @@ try {
     if (-not (Test-SnapshotRestored -Snapshots $restoreValues)) {
         throw 'Post-restore verification failed.'
     }
-    [pscustomobject][ordered]@{
+    $result = [pscustomobject][ordered]@{
         SchemaVersion = 1
         RestoredAtUtc = [DateTime]::UtcNow.ToString('o')
         Action = 'Restored'
@@ -517,6 +705,7 @@ try {
         RebootPerformed = $false
         ServicesRestarted = @()
     }
+    Write-Result -Result $result -Format $OutputFormat
 } catch {
     Restore-ValueSnapshots -Snapshots $currentSnapshots
     throw

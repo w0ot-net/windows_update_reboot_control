@@ -21,7 +21,7 @@ Describe 'WindowsUpdateRebootControl audit' {
         @{ Mode = 'ClientNotify'; ExpectedNoAutoUpdate = 0; ExpectedAUOptions = 2 },
         @{ Mode = 'ServerNotify'; ExpectedNoAutoUpdate = 0; ExpectedAUOptions = 7 }
     ) {
-        $result = & $scriptPath -Action Audit -Mode $Mode
+        $result = & $scriptPath -Action Audit -Mode $Mode -OutputFormat Object
 
         $result.Action | Should -Be 'Audited'
         $result.Mode | Should -Be $Mode
@@ -29,5 +29,14 @@ Describe 'WindowsUpdateRebootControl audit' {
             Should -Be $ExpectedNoAutoUpdate
         ($result.PolicyValues | Where-Object Name -eq 'AUOptions').ExpectedValue |
             Should -Be $ExpectedAUOptions
+    }
+
+    It 'can emit machine-readable JSON explicitly' {
+        $json = & $scriptPath -Action Audit -Mode StrictManual -OutputFormat Json
+        $result = $json | ConvertFrom-Json
+
+        $result.Action | Should -Be 'Audited'
+        $result.Mode | Should -Be 'StrictManual'
+        $result.PolicyValues.Count | Should -Be 4
     }
 }

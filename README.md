@@ -3,6 +3,9 @@
 A single, reversible PowerShell script for keeping Windows Update installation
 and reboot timing under operator control.
 
+Console output is concise and colorized by default. JSON and PowerShell objects
+are available explicitly for automation.
+
 Open PowerShell as Administrator and paste one of the commands below.
 
 ## Apply the recommended policy
@@ -19,7 +22,7 @@ Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_updat
 Audit without changing anything:
 
 ```powershell
-& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Audit -Mode StrictManual | ConvertTo-Json -Depth 10
+& ([scriptblock]::Create((Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/w0ot-net/windows_update_reboot_control/main/WindowsUpdateRebootControl.ps1' -ErrorAction Stop))) -Action Audit -Mode StrictManual
 ```
 
 Apply `ClientNotify` on Windows 10 or 11:
@@ -53,6 +56,7 @@ Restore the policy state saved before the first apply:
 | `-Action` | `Audit`, `Apply`, or `Restore` |
 | `-Mode` | `StrictManual`, `ClientNotify`, or `ServerNotify` |
 | `-BackupPath` | Use a backup path other than `%ProgramData%\WindowsUpdateRebootControl\baseline.json` |
+| `-OutputFormat` | `Human` (default), `Json`, or `Object` |
 | `-WhatIf` | Preview `Apply` or `Restore` |
 | `-Confirm` | Ask for confirmation before changing policy |
 | `-AllowManagedDevice` | Permit local changes on a domain-joined or MDM-managed device |
